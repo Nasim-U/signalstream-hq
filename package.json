@@ -1,0 +1,27 @@
+{
+  "name": "signalstream-hq",
+  "version": "1.0.0",
+  "description": "Full-stack revenue operations & customer health command center with idempotent webhook ingestion, explainable churn risk scoring, and automated alert playbooks.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "seed": "node src/seed.js --reset",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "revenue-operations",
+    "customer-health",
+    "churn-scoring",
+    "webhooks",
+    "idempotency",
+    "internal-tools",
+    "full-stack",
+    "sqlite"
+  ],
+  "author": "Nasim Uddin (@Nasim-U)",
+  "license": "MIT"
+}

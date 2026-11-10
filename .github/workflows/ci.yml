@@ -1,0 +1,37 @@
+name: SignalStream HQ CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-verify:
+    name: Full-Stack Suite & SVG Validation (Node 24)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Validate SVG visual assets (strict XML check)
+        run: |
+          python3 -c "import xml.etree.ElementTree as ET; [ET.parse(p) for p in ('docs/ui-preview.svg', 'docs/pipeline-flow.svg')]; print('SVG assets validated cleanly.')"
+
+      - name: Run unit & HTTP integration test suite
+        run: npm test
+
+      - name: End-to-end live server smoke check
+        run: |
+          PORT=8763 node src/server.js &
+          SERVER_PID=$!
+          sleep 1
+          curl -fsS http://127.0.0.1:8763/api/health | grep -q '"status": "ok"'
+          curl -fsS "http://127.0.0.1:8763/api/accounts/export?format=csv" | head -n 1 | grep -q "account_id,name"
+          kill $SERVER_PID
