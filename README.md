@@ -1,141 +1,135 @@
-# SignalStream HQ — Real-Time Revenue & Customer Operations Intelligence
+# signalstream-hq
 
-[![SignalStream HQ CI](https://github.com/Nasim-U/signalstream-hq/actions/workflows/ci.yml/badge.svg)](https://github.com/Nasim-U/signalstream-hq/actions/workflows/ci.yml)
-![Runtime](https://img.shields.io/badge/Node.js-24%2B%20Native%20ESM-38bdf8)
-![Storage](https://img.shields.io/badge/Database-SQLite%20WAL-a855f7)
-![License](https://img.shields.io/badge/License-MIT-10b981)
+[![CI](https://github.com/Nasim-U/signalstream-hq/actions/workflows/ci.yml/badge.svg)](https://github.com/Nasim-U/signalstream-hq/actions/workflows/ci.yml)
 
-**SignalStream HQ** is a full-stack revenue operations (RevOps) and customer health command center engineered for B2B SaaS teams. It ingests multi-channel webhooks across billing (`Stripe`), product telemetry, and customer support (`Zendesk`), computes an **explainable 0–100 Churn Risk & Account Health Score**, detects **Automated Expansion Opportunities**, and dispatches **idempotent alert playbooks** to Slack, PagerDuty, and CRM workflows.
+`signalstream-hq` is a Node.js and SQLite web application that tracks B2B subscription health across billing, product telemetry, and support tickets. It accepts Stripe, Zendesk, and usage webhooks, deduplicates retries in SQLite WAL, computes a 0 to 100 churn risk score, and exports filtered account ledgers as CSV or JSON.
 
-Built on modern zero-dependency Node.js (`node:http`, `node:sqlite` in WAL mode, `node:test`) with an interactive dark-mode Operations Command Center UI—booting locally in under one second with zero external build tooling.
+![Account health ledger](docs/account-ledger.png)
 
-<p align="center">
-  <img src="docs/ui-preview.svg" alt="SignalStream HQ Command Center Interface" width="100%" />
-</p>
+Selecting an account row opens a slide-over detail sheet with an 8-week active usage chart, the four-factor score breakdown, an idempotent webhook replay tester, and the recent event and dispatch log.
 
----
+![Account detail sheet](docs/account-drawer.png)
 
-## Architectural Highlights
+## How ingestion and scoring work
 
-<p align="center">
-  <img src="docs/pipeline-flow.svg" alt="SignalStream HQ Event Ingestion and Scoring Pipeline" width="100%" />
-</p>
+`src/db.js` opens `data/signalstream.db` with `PRAGMA journal_mode = WAL` and `PRAGMA foreign_keys = ON`. When `POST /api/events/ingest` receives a payload, `ingestEvent()` checks `ingested_events` for an existing `idempotency_key` taken from either the JSON body or the `Idempotency-Key` HTTP header.
 
-1. **Multi-Channel Idempotent Event Ingestion (`POST /api/events/ingest`)**
-   - Processes Stripe-style billing webhooks (`invoice.payment_failed`, `invoice.paid`, `customer.subscription.updated`), product usage drops/spikes (`telemetry.usage_drop`, `telemetry.seat_spike`), and P1/P2 support escalations (`support.ticket_escalated`, `support.ticket_resolved`).
-   - Enforces strict **database-level idempotency** (`UNIQUE(idempotency_key)` inside `BEGIN IMMEDIATE` SQLite WAL transactions) via request body or `Idempotency-Key` HTTP header. Duplicate webhook retries return `200 OK` (`deduplicated: true`) without mutating account metrics or double-firing alerts.
-2. **Explainable Composite Risk & Expansion Scoring Engine (`src/scoring.js`)**
-   - Every score is decomposed into four transparent, human-readable operational dimensions totaling **0–100 risk points** (`Health Score = 100 - Risk Score`), alongside an automated upsell capacity detector:
+If the key already exists, the store increments `duplicates_blocked` in `system_metrics` and returns `HTTP 200` with `"deduplicated": true`. Neither the account row nor `playbook_dispatches` changes.
 
-| Dimension | Max Risk Weight | Operational Signals Evaluated |
-| :--- | :---: | :--- |
-| **Product Usage Velocity** | `35 pts` | 7-day active telemetry velocity vs. 30-day weekly baseline (`-8%` softening to `<= -55%` contraction) |
-| **Billing & Dunning Health** | `30 pts` | Past-due / uncollectible subscription state compounded by failed Stripe charge retry count |
-| **P1 / P2 Support Backlog** | `20 pts` | Unresolved P1 critical incidents (`9 pts` each) and open P2 escalations (`3 pts` each) |
-| **Seat Adoption & Renewal** | `15 pts` | Licensed seat shelfware ratio (`seats_active / seats_purchased`) weighted by `< 45d` renewal proximity |
-| **Expansion Signal Detector** | *Upsell Uplift* | Flags low-risk (`<= 25`) active accounts at `>= 88%` seat capacity with `>= +8%` velocity growth (`+22%` to `+32%` est. ARR) |
+If the key is new, `ingestEvent()` starts a `BEGIN IMMEDIATE` transaction and runs three steps atomically:
 
-3. **Configurable Playbook Router & Deterministic Dispatch Keys (`src/playbooks.js`)**
-   - Evaluates active routing rules on every state transition (e.g., *Enterprise Critical Churn Rescue*, *Automated Billing & Dunning Recovery*, *P1 Support Escalation Swarm*, *Expansion Capacity & Upsell Signal*).
-   - Computes deterministic SHA-256 `dispatch_key` (`dsp_<16-hex>`) hashes from `(rule_id, account_id, trigger_event_key)` so downstream Slack/CRM webhooks never double-fire.
-4. **Interactive Operations Command Center UI (`public/`)**
-   - **Live Portfolio Summary Strip:** Monitors `$3.92M` seeded ARR across **44 B2B SaaS accounts** (Enterprise, Mid-Market, Growth), At-Risk ARR exposure, Expansion Pipeline uplift, and deduplicated webhook counters.
-   - **Filterable Matrix & Slide-Over Intelligence Drawer:** Filter by risk tier, segment, CSM owner, or search query. Click any account to inspect its **8-week SVG telemetry sparkline**, per-factor risk weights, **one-click live webhook simulator** (including duplicate key replay testing), and manual playbook runner.
-   - **Instant Reporting:** One-click filtered **CSV** and **JSON** portfolio exports.
+1. Mutates the account state for the event type and recomputes scores via `computeAccountIntelligence()` in `src/scoring.js`.
+2. Inserts the event into `ingested_events`, where `UNIQUE(idempotency_key)` blocks duplicate writes.
+3. Evaluates enabled rules in `src/playbooks.js` and inserts matching alerts into `playbook_dispatches`. `buildDispatchKey()` hashes `rule_id`, `account_id`, and `trigger_event_key` with SHA-256 into a deterministic `dsp_<16-hex>` key enforced by `UNIQUE(dispatch_key)`.
 
----
+`src/scoring.js` calculates `risk_score` as the sum of four capped factors totaling 100 points, with `health_score` equal to `100 - risk_score`:
 
-## Quickstart
+| Factor | Max points | Calculation in `src/scoring.js` |
+| :--- | ---: | :--- |
+| Usage velocity | 35 | Compares `usage_7d` against `usage_30d_weekly_avg`. Contractions of `<= -55%` add 35 points, `<= -35%` add 27, `<= -20%` add 18, and `<= -8%` add 9. |
+| Billing and dunning | 30 | Adds 30 points when `billing_status` is `uncollectible` or `canceled`, `min(30, 14 + failed_payments * 6)` when `past_due`, or `min(24, failed_payments * 8)` on active accounts with failed retries. |
+| Open support escalations | 20 | Adds `min(20, open_p1_tickets * 9 + open_p2_tickets * 3)`. |
+| Seat adoption and renewal | 15 | Computes `seats_active / seats_purchased`. Ratios below `0.35` add 12 points, below `0.55` add 8, and below `0.70` add 4, plus 3 points when `renewal_days <= 45`. |
 
-**Prerequisites:** Node.js `v22.5+` (`v24 LTS` recommended; uses built-in `node:sqlite` and `node:test` with zero `npm install` overhead).
+`src/config.js` maps `75` to `100` to `Critical`, `50` to `74` to `High`, `28` to `49` to `Moderate`, and `0` to `27` to `Healthy`. `computeAccountIntelligence()` sets `expansion_eligible` to `true` with a `22%` or `32%` ARR uplift estimate when `risk_score <= 25`, `billing_status` is `active`, `failed_payments` is `0`, `open_p1_tickets` is `0`, `seat_utilization >= 0.88`, and `usage_velocity_pct >= 8`.
+
+## Run locally
+
+Install Node.js `22.5.0` or newer. Node.js `24` LTS is recommended. The server uses built-in `node:http`, `node:sqlite`, and `node:test` modules with zero external runtime dependencies.
+
+1. Clone the repository and enter the directory:
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/Nasim-U/signalstream-hq.git
 cd signalstream-hq
+```
 
-# 2. Launch the Command Center (auto-seeds 44 SaaS accounts on first boot)
+2. Start the server on port `8763`. On first startup, `src/seed.js` populates 44 B2B accounts and initial webhook history if `data/signalstream.db` is empty:
+
+```bash
 npm start
-# -> Live at http://127.0.0.1:8763
+```
 
-# 3. Run the automated unit & HTTP integration test suite
+Open `http://127.0.0.1:8763` in your browser.
+
+3. Run the unit and HTTP integration test suite:
+
+```bash
 npm test
 ```
 
-To reset and re-seed the SQLite database from the CLI at any time:
+4. Reset and re-seed `data/signalstream.db` from the command line at any time:
 
 ```bash
 npm run seed
 ```
 
----
+## HTTP endpoints
 
-## REST API Reference
+`src/app.js` serves the static frontend from `public/` and exposes these routes:
 
-| Method | Endpoint | Description |
+| Method | Path | Behavior |
 | :--- | :--- | :--- |
-| `GET` | `/api/health` | Service health check and monitored account count |
-| `GET` | `/api/summary` | Portfolio KPIs (Total ARR, At-Risk ARR, Expansion Pipeline, tier breakdown, dedup stats) |
-| `GET` | `/api/accounts` | Filterable account list (`?riskTier=Critical&segment=Enterprise&owner=...&search=...`) |
-| `GET` | `/api/accounts/:id` | Full account intelligence detail, 8-week sparkline array, risk factors, recent events & dispatches |
-| `GET` | `/api/accounts/export` | Downloadable portfolio report (`?format=csv` or `?format=json`, supports all table filters) |
-| `POST` | `/api/events/ingest` | Idempotent multi-channel webhook ingestion (`201` new, `200` deduplicated retry) |
-| `GET` | `/api/playbooks/dispatches` | Recent automated & manual playbook alert dispatches (`?limit=25`) |
-| `GET` | `/api/playbooks/rules` | List configurable playbook routing rules and enabled status |
-| `PATCH` | `/api/playbooks/rules/:id` | Enable or pause an automated routing rule (`{ "enabled": false }`) |
-| `POST` | `/api/playbooks/run` | Trigger a targeted or auto-matched playbook for an account with idempotency key support |
-| `POST` | `/api/admin/reset` | Reset and re-seed the 44-account baseline SaaS portfolio |
+| `GET` | `/api/health` | Returns service status and monitored account count. |
+| `GET` | `/api/summary` | Returns portfolio ARR totals, risk tier counts, webhook counters, and distinct owners. |
+| `GET` | `/api/accounts` | Lists accounts filtered by `riskTier`, `segment`, `owner`, `search`, `expansionOnly`, `sortBy`, and `sortDir`. |
+| `GET` | `/api/accounts/:id` | Returns one account with its 8-week `usage_history`, `risk_factors`, recent events, and dispatches. |
+| `GET` | `/api/accounts/export` | Exports filtered accounts when `format=csv` or `format=json` is passed. |
+| `GET` | `/api/events` | Lists recent rows from `ingested_events` up to the `limit` query parameter. |
+| `POST` | `/api/events/ingest` | Ingests a webhook, returning `201` on first delivery and `200` on a duplicate `idempotency_key`. |
+| `GET` | `/api/playbooks/dispatches` | Lists recent rows from `playbook_dispatches` up to the `limit` query parameter. |
+| `GET` | `/api/playbooks/rules` | Lists the four routing rules and their `enabled` boolean state. |
+| `PATCH` | `/api/playbooks/rules/:id` | Updates a routing rule with `{ "enabled": true }` or `{ "enabled": false }`. |
+| `POST` | `/api/playbooks/run` | Dispatches a specified or auto-matched rule for `account_id` with optional `idempotency_key`. |
+| `POST` | `/api/admin/reset` | Clears and re-seeds the 44-account dataset. |
 
-### Example: Idempotent Webhook Ingestion
+To send a test Stripe webhook and verify deduplication, run the same `curl` command twice:
 
 ```bash
 curl -X POST http://127.0.0.1:8763/api/events/ingest \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: evt_stripe_inv_99481" \
-  -d '{
-    "account_id": "acct_011",
-    "source": "stripe",
-    "event_type": "invoice.payment_failed",
-    "payload": {
-      "invoice_id": "in_01HXYZ",
-      "amount_due": 11800,
-      "attempt_count": 2
-    }
-  }'
+	-H "Content-Type: application/json" \
+	-H "Idempotency-Key: evt_stripe_inv_99481" \
+	-d '{
+		"account_id": "acct_011",
+		"source": "stripe",
+		"event_type": "invoice.payment_failed",
+		"payload": {
+			"invoice_id": "in_01HXYZ",
+			"amount_due": 11800,
+			"attempt_count": 2
+		}
+	}'
 ```
 
-Re-running the exact command above returns `HTTP 200` with `"deduplicated": true`, preserving exact risk score integrity and blocking duplicate Slack/CRM dispatches.
+The first call returns `HTTP 201` with `"deduplicated": false` and updates `acct_011`. Repeating the command with the same `Idempotency-Key` returns `HTTP 200` with `"deduplicated": true` without changing `risk_score` or firing duplicate dispatches.
 
----
+## Project layout
 
-## Project Structure
+Regenerate the tracked file list with `git ls-files`:
 
 ```text
-signalstream-hq/
-├── .github/workflows/ci.yml   # GitHub Actions CI (SVG XML check + test suite + E2E smoke test)
-├── docs/
-│   ├── ui-preview.svg         # Command Center UI preview graphic
-│   └── pipeline-flow.svg      # Event ingestion & scoring architecture diagram
-├── public/
-│   ├── index.html             # Full-stack Operations Command Center markup
-│   ├── styles.css             # Dark-mode RevOps interface styling
-│   └── app.js                 # Interactive filters, SVG sparklines, drawer & webhook simulator
-├── src/
-│   ├── config.js              # Environment configuration, risk thresholds & default playbook rules
-│   ├── scoring.js             # Explainable 4-factor churn risk & expansion opportunity engine
-│   ├── playbooks.js           # Rule matcher & deterministic SHA-256 dispatch key builder
-│   ├── db.js                  # SQLite WAL store, transactional ingestion & CSV exporter
-│   ├── seed.js                # 44-account B2B SaaS portfolio & initial webhook seeder
-│   ├── app.js                 # Native HTTP router & REST API controller
-│   └── server.js              # Application entrypoint
-└── test/
-    ├── scoring.test.js        # Risk factor weights, boundaries & expansion eligibility tests
-    ├── playbooks.test.js      # Rule matching & idempotent deduplication unit tests
-    └── api.test.js            # End-to-end HTTP integration & lifecycle tests
+.github/workflows/ci.yml
+.gitignore
+LICENSE
+README.md
+docs/account-drawer.png
+docs/account-ledger.png
+package.json
+public/app.js
+public/index.html
+public/styles.css
+src/app.js
+src/config.js
+src/db.js
+src/playbooks.js
+src/scoring.js
+src/seed.js
+src/server.js
+test/api.test.js
+test/playbooks.test.js
+test/scoring.test.js
 ```
-
----
 
 ## License
 
-Released under the [MIT License](LICENSE). Built by **Nasim Uddin** ([@Nasim-U](https://github.com/Nasim-U)).
+[MIT](LICENSE)

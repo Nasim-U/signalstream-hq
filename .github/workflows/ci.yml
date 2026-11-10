@@ -1,4 +1,4 @@
-name: SignalStream HQ CI
+name: CI
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   test-and-verify:
-    name: Full-Stack Suite & SVG Validation (Node 24)
+    name: Test suite and asset verification (Node 24)
     runs-on: ubuntu-latest
 
     steps:
@@ -20,18 +20,31 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Validate SVG visual assets (strict XML check)
+      - name: Verify screenshot PNG assets
         run: |
-          python3 -c "import xml.etree.ElementTree as ET; [ET.parse(p) for p in ('docs/ui-preview.svg', 'docs/pipeline-flow.svg')]; print('SVG assets validated cleanly.')"
+          python3 -c "
+          import os, struct
+          for p in ('docs/account-ledger.png', 'docs/account-drawer.png'):
+              assert os.path.isfile(p), f'Missing {p}'
+              size = os.path.getsize(p)
+              assert size > 20000, f'{p} too small ({size} bytes)'
+              with open(p, 'rb') as f:
+                  header = f.read(24)
+              assert header[:8] == b'\x89PNG\r\n\x1a\n', f'Invalid PNG signature in {p}'
+              w, h = struct.unpack('>II', header[16:24])
+              assert w >= 2800 and h >= 1700, f'Unexpected dimensions {w}x{h} in {p}'
+              print(f'{p}: {w}x{h} ({size} bytes)')
+          "
 
-      - name: Run unit & HTTP integration test suite
+      - name: Run unit and HTTP integration tests
         run: npm test
 
-      - name: End-to-end live server smoke check
+      - name: Live server smoke check
         run: |
           PORT=8763 node src/server.js &
           SERVER_PID=$!
           sleep 1
           curl -fsS http://127.0.0.1:8763/api/health | grep -q '"status": "ok"'
+          curl -fsS http://127.0.0.1:8763/api/events | grep -q '"events"'
           curl -fsS "http://127.0.0.1:8763/api/accounts/export?format=csv" | head -n 1 | grep -q "account_id,name"
           kill $SERVER_PID

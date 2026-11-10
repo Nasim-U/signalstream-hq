@@ -75,25 +75,25 @@ export function computeAccountIntelligence(account) {
     billingPoints = Math.min(24, failedPayments * 8);
   }
 
-  let billingSummary = 'Clean billing history — auto-pay active';
+  let billingSummary = 'Active subscription, auto-pay enabled';
   if (billingPoints >= 24) {
-    billingSummary = `Critical dunning risk: ${failedPayments} failed retries (${billingStatus})`;
+    billingSummary = `${failedPayments} failed charge retries, status ${billingStatus}`;
   } else if (billingPoints >= 14) {
-    billingSummary = `Past-due invoice with ${failedPayments} failed Stripe retry attempt(s)`;
+    billingSummary = `Past-due invoice with ${failedPayments} failed Stripe retries`;
   } else if (billingPoints > 0) {
-    billingSummary = `${failedPayments} recent payment retry warning(s)`;
+    billingSummary = `${failedPayments} recent payment retry warning`;
   }
 
   // 3. Support Escalation & P1 Backlog Factor (0 - 20 pts)
   const rawSupportPoints = openP1 * 9 + openP2 * 3;
   const supportPoints = clamp(rawSupportPoints, 0, 20);
-  let supportSummary = 'Zero open P1/P2 escalations';
+  let supportSummary = 'No open P1 or P2 escalations';
   if (openP1 >= 2) {
-    supportSummary = `${openP1} unresolved P1 critical escalations (${openP2} P2 open)`;
+    supportSummary = `${openP1} open P1 incidents, ${openP2} open P2 tickets`;
   } else if (openP1 === 1) {
-    supportSummary = `1 active P1 escalation${openP2 > 0 ? ` + ${openP2} P2 ticket(s)` : ''}`;
+    supportSummary = `1 open P1 incident${openP2 > 0 ? `, ${openP2} open P2 tickets` : ''}`;
   } else if (openP2 > 0) {
-    supportSummary = `${openP2} open P2 support ticket(s), no P1 blockers`;
+    supportSummary = `${openP2} open P2 tickets, 0 P1 incidents`;
   }
 
   // 4. Seat Utilization & Renewal Proximity Factor (0 - 15 pts)
@@ -139,7 +139,7 @@ export function computeAccountIntelligence(account) {
   const riskFactors = [
     {
       key: 'usage_velocity',
-      label: 'Product Usage Velocity',
+      label: 'Usage velocity',
       points: usagePoints,
       max_points: 35,
       severity: severityFor(usagePoints, 35),
@@ -147,7 +147,7 @@ export function computeAccountIntelligence(account) {
     },
     {
       key: 'billing_dunning',
-      label: 'Billing & Dunning Health',
+      label: 'Billing and dunning',
       points: billingPoints,
       max_points: 30,
       severity: severityFor(billingPoints, 30),
@@ -155,7 +155,7 @@ export function computeAccountIntelligence(account) {
     },
     {
       key: 'support_backlog',
-      label: 'P1/P2 Support Backlog',
+      label: 'Open support escalations',
       points: supportPoints,
       max_points: 20,
       severity: severityFor(supportPoints, 20),
@@ -163,7 +163,7 @@ export function computeAccountIntelligence(account) {
     },
     {
       key: 'seat_adoption',
-      label: 'Seat Utilization & Renewal',
+      label: 'Seat adoption and renewal',
       points: seatPoints,
       max_points: 15,
       severity: severityFor(seatPoints, 15),

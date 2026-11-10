@@ -775,6 +775,23 @@ export function createStore(dbPath = DEFAULT_DB_PATH) {
       .map(hydrateDispatchRow);
   }
 
+  function listEvents(limit = 50) {
+    const safeLimit = Math.min(100, Math.max(1, Number(limit || 50)));
+    return db
+      .prepare(`
+        SELECT e.*, a.name AS account_name
+        FROM ingested_events e
+        LEFT JOIN accounts a ON a.id = e.account_id
+        ORDER BY e.id DESC
+        LIMIT ?
+      `)
+      .all(safeLimit)
+      .map((row) => ({
+        ...hydrateEventRow(row),
+        account_name: row.account_name || row.account_id,
+      }));
+  }
+
   function getPortfolioSummary() {
     const totals = db
       .prepare(`
@@ -922,6 +939,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH) {
     ingestEvent,
     runManualPlaybook,
     listDispatches,
+    listEvents,
     listRules,
     toggleRule,
     getPortfolioSummary,

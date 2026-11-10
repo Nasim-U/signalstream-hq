@@ -3,271 +3,355 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SignalStream HQ — Revenue &amp; Customer Operations Intelligence</title>
+  <title>SignalStream HQ | Account health ledger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="app-shell">
-    <!-- Top Navigation Header -->
-    <header class="topbar">
-      <div class="brand-group">
-        <div class="brand-mark" aria-hidden="true">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-            <rect width="28" height="28" rx="7" fill="#0EA5E9" fill-opacity="0.16" stroke="#38BDF8" stroke-width="1.4"/>
-            <path d="M5 18L10.5 12.5L14.5 16L22.5 8" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="22.5" cy="8" r="2.5" fill="#38BDF8"/>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-title-row">
-            <h1 class="brand-title">SignalStream HQ</h1>
-            <span class="live-pill"><span class="live-dot"></span>LIVE ENGINE</span>
-          </div>
-          <p class="brand-subtitle">Real-Time Revenue Operations, Webhook Ingestion &amp; Explainable Churn Intelligence</p>
+  <div class="app-layout">
+    <aside class="nav-rail" aria-label="Workspace navigation">
+      <div class="rail-brand">
+        <svg class="rail-logo" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <rect x="1" y="1" width="18" height="18" rx="4" stroke="#E5E7EB" stroke-opacity="0.28" stroke-width="1.25" />
+          <path d="M4.5 13.5L8.2 9.5L11.2 12L15.5 6.5" stroke="#E5E7EB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="15.5" cy="6.5" r="1.6" fill="#3B82F6" />
+        </svg>
+        <div class="rail-brand-text">
+          <span class="rail-brand-name">SignalStream HQ</span>
+          <span class="rail-brand-env">Revenue operations</span>
         </div>
       </div>
 
-      <div class="topbar-actions">
-        <button id="btnExportCsv" class="btn btn-secondary" type="button" title="Download filtered accounts as CSV">
-          Export CSV
-        </button>
-        <button id="btnExportJson" class="btn btn-secondary" type="button" title="Download filtered report as JSON">
-          Export JSON
-        </button>
-        <button id="btnResetDemo" class="btn btn-ghost" type="button" title="Reset and re-seed demo portfolio">
-          Reset Demo
+      <nav class="rail-nav">
+        <div class="rail-group">
+          <div class="rail-group-title">Accounts</div>
+          <button type="button" class="rail-item active" data-view="all">
+            <span>All accounts</span>
+            <span class="rail-count" id="navCountAll">44</span>
+          </button>
+          <button type="button" class="rail-item" data-view="critical">
+            <span class="rail-item-label">
+              <span class="status-dot dot-critical" aria-hidden="true"></span>
+              Critical risk
+            </span>
+            <span class="rail-count" id="navCountCritical">0</span>
+          </button>
+          <button type="button" class="rail-item" data-view="expansion">
+            <span class="rail-item-label">
+              <span class="status-dot dot-healthy" aria-hidden="true"></span>
+              Expansion candidates
+            </span>
+            <span class="rail-count" id="navCountExpansion">0</span>
+          </button>
+        </div>
+
+        <div class="rail-divider" role="separator"></div>
+
+        <div class="rail-group">
+          <div class="rail-group-title">Pipeline</div>
+          <button type="button" class="rail-item" data-view="webhooks">
+            <span>Webhook log</span>
+            <span class="rail-count" id="navCountWebhooks">0</span>
+          </button>
+          <button type="button" class="rail-item" data-view="rules">
+            <span>Routing rules</span>
+            <span class="rail-count" id="navCountRules">4</span>
+          </button>
+        </div>
+      </nav>
+
+      <div class="rail-footer">
+        <div class="rail-storage-row">
+          <span class="status-dot dot-healthy" aria-hidden="true"></span>
+          <span>SQLite WAL active</span>
+        </div>
+        <div class="rail-dedup-stat" id="railDedupStat">2 duplicate keys blocked</div>
+        <button id="btnResetDemo" class="rail-reset-btn" type="button">
+          Reset seeded data
         </button>
       </div>
-    </header>
+    </aside>
 
-    <!-- Live Portfolio KPI Strip -->
-    <section class="kpi-grid" aria-label="Portfolio Summary Metrics">
-      <article class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Total ARR Monitored</span>
-          <span class="kpi-tag tag-blue" id="kpiAccountCount">0 accounts</span>
+    <main class="workspace">
+      <header class="workspace-header">
+        <div class="workspace-title-block">
+          <h1 class="workspace-title" id="workspaceTitle">Account health ledger</h1>
+          <p class="workspace-subtitle" id="workspaceSubtitle">
+            Billing, product usage, and support signals across 44 B2B subscriptions
+          </p>
         </div>
-        <div class="kpi-value" id="kpiTotalArr">$0</div>
-        <div class="kpi-meta" id="kpiAvgHealth">Portfolio avg health: --/100</div>
-      </article>
-
-      <article class="kpi-card kpi-card-risk">
-        <div class="kpi-header">
-          <span class="kpi-label">At-Risk ARR (Critical + High)</span>
-          <span class="kpi-tag tag-rose" id="kpiAtRiskCount">0 accounts</span>
+        <div class="workspace-actions">
+          <button id="btnExportJson" class="btn btn-secondary" type="button">
+            Export JSON
+          </button>
+          <button id="btnExportCsv" class="btn btn-primary" type="button">
+            Export CSV
+          </button>
         </div>
-        <div class="kpi-value text-rose" id="kpiAtRiskArr">$0</div>
-        <div class="kpi-meta" id="kpiRiskBreakdown">0% of total ARR exposed</div>
-      </article>
+      </header>
 
-      <article class="kpi-card kpi-card-expansion">
-        <div class="kpi-header">
-          <span class="kpi-label">Expansion Pipeline</span>
-          <span class="kpi-tag tag-emerald" id="kpiExpansionCount">0 ready</span>
-        </div>
-        <div class="kpi-value text-emerald" id="kpiExpansionArr">+$0</div>
-        <div class="kpi-meta">High seat utilization + velocity surge</div>
-      </article>
-
-      <article class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Automated Playbooks Fired</span>
-          <span class="kpi-tag tag-purple" id="kpiDedupBlocked">0 deduped</span>
-        </div>
-        <div class="kpi-value text-sky" id="kpiPlaybooksFired">0</div>
-        <div class="kpi-meta" id="kpiEventsIngested">0 multi-channel webhooks processed</div>
-      </article>
-    </section>
-
-    <!-- Main Command Center Workspace -->
-    <main class="workspace-grid">
-      <!-- Left: Account Health Table & Filters -->
-      <section class="panel accounts-panel">
-        <div class="panel-header">
-          <div>
-            <h2 class="panel-title">Customer Portfolio Health Matrix</h2>
-            <p class="panel-subtitle">Click any account to inspect telemetry sparklines, risk factor weights, or simulate live webhooks.</p>
+      <section class="summary-strip" aria-label="Portfolio summary">
+        <div class="summary-cell">
+          <span class="summary-label">Monitored ARR</span>
+          <div class="summary-value-row">
+            <span class="summary-value" id="kpiTotalArr">$0</span>
+            <span class="summary-sub" id="kpiAccountCount">44 accounts</span>
           </div>
-          <span class="result-count" id="tableResultCount">Showing 0 accounts</span>
         </div>
+        <div class="summary-cell">
+          <span class="summary-label">At-risk ARR</span>
+          <div class="summary-value-row">
+            <span class="summary-value text-critical" id="kpiAtRiskArr">$0</span>
+            <span class="summary-sub" id="kpiAtRiskCount">0 accounts</span>
+          </div>
+        </div>
+        <div class="summary-cell">
+          <span class="summary-label">Expansion candidates</span>
+          <div class="summary-value-row">
+            <span class="summary-value text-healthy" id="kpiExpansionArr">+$0</span>
+            <span class="summary-sub" id="kpiExpansionCount">0 eligible</span>
+          </div>
+        </div>
+        <div class="summary-cell">
+          <span class="summary-label">Webhooks ingested</span>
+          <div class="summary-value-row">
+            <span class="summary-value" id="kpiEventsIngested">0</span>
+            <span class="summary-sub" id="kpiDedupBlocked">0 duplicates blocked</span>
+          </div>
+        </div>
+        <div class="summary-cell">
+          <span class="summary-label">Playbooks dispatched</span>
+          <div class="summary-value-row">
+            <span class="summary-value" id="kpiPlaybooksFired">0</span>
+            <span class="summary-sub" id="kpiAvgHealth">Avg health 0 / 100</span>
+          </div>
+        </div>
+      </section>
 
-        <div class="filter-bar">
-          <div class="tier-pills" id="tierPills" role="tablist" aria-label="Filter by risk tier">
-            <button class="pill active" data-tier="All" type="button">All</button>
-            <button class="pill pill-critical" data-tier="Critical" type="button">Critical</button>
-            <button class="pill pill-high" data-tier="High" type="button">High</button>
-            <button class="pill pill-moderate" data-tier="Moderate" type="button">Moderate</button>
-            <button class="pill pill-healthy" data-tier="Healthy" type="button">Healthy</button>
-            <button class="pill pill-expansion" data-tier="Expansion" type="button">Expansion Ready</button>
+      <section id="accountsView" class="ledger-card">
+        <div class="ledger-toolbar">
+          <div class="tier-tabs" id="tierTabs" role="tablist" aria-label="Filter by risk tier">
+            <button class="tier-tab active" data-tier="All" type="button">All</button>
+            <button class="tier-tab" data-tier="Critical" type="button">Critical</button>
+            <button class="tier-tab" data-tier="High" type="button">High</button>
+            <button class="tier-tab" data-tier="Moderate" type="button">Moderate</button>
+            <button class="tier-tab" data-tier="Healthy" type="button">Healthy</button>
+            <button class="tier-tab" data-tier="Expansion" type="button">Expansion</button>
           </div>
 
-          <div class="filter-controls">
+          <div class="toolbar-controls">
             <input
               id="searchInput"
-              class="input-search"
+              class="control-input"
               type="search"
-              placeholder="Search account, domain, CSM..."
-              aria-label="Search accounts"
+              placeholder="Filter company, domain, or owner"
+              aria-label="Filter accounts"
             />
-            <select id="segmentSelect" class="select-control" aria-label="Filter by segment">
-              <option value="All">All Segments</option>
+            <select id="segmentSelect" class="control-select" aria-label="Filter by segment">
+              <option value="All">All segments</option>
               <option value="Enterprise">Enterprise</option>
               <option value="Mid-Market">Mid-Market</option>
               <option value="Growth">Growth</option>
             </select>
-            <select id="ownerSelect" class="select-control" aria-label="Filter by CSM owner">
-              <option value="All">All Owners</option>
+            <select id="ownerSelect" class="control-select" aria-label="Filter by owner">
+              <option value="All">All owners</option>
             </select>
-            <select id="sortSelect" class="select-control" aria-label="Sort accounts">
-              <option value="risk_score:desc">Risk Score (High → Low)</option>
-              <option value="arr:desc">ARR (High → Low)</option>
-              <option value="renewal_days:asc">Renewal (Soonest)</option>
-              <option value="usage_velocity_pct:asc">Usage Drop (Steepest)</option>
-              <option value="seat_utilization:desc">Seat Utilization (High → Low)</option>
+            <select id="sortSelect" class="control-select" aria-label="Sort accounts">
+              <option value="arr:desc">Sort: Highest ARR</option>
+              <option value="risk_score:desc">Sort: Risk score</option>
+              <option value="renewal_days:asc">Sort: Nearest renewal</option>
+              <option value="usage_velocity_pct:asc">Sort: Steepest usage drop</option>
+              <option value="seat_utilization:desc">Sort: Seat utilization</option>
             </select>
           </div>
         </div>
 
-        <div class="table-wrap">
-          <table class="accounts-table">
+        <div class="table-scroll">
+          <table class="ledger-table">
             <thead>
               <tr>
                 <th>Account</th>
-                <th>Segment / CSM</th>
-                <th>ARR &amp; Billing</th>
-                <th>Churn Risk (0–100)</th>
-                <th>7d Velocity &amp; Trend</th>
-                <th>Seats &amp; Renewal</th>
+                <th>Segment</th>
+                <th>Owner</th>
+                <th>Billing</th>
+                <th class="num-col">ARR</th>
+                <th class="num-col">Seat usage</th>
+                <th class="num-col">7d usage change</th>
+                <th class="num-col">Renewal</th>
+                <th class="num-col">Risk score</th>
               </tr>
             </thead>
             <tbody id="accountsTableBody">
               <tr>
-                <td colspan="6" class="empty-cell">Loading SaaS portfolio intelligence...</td>
+                <td colspan="9" class="empty-state">Loading account health ledger...</td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <div class="ledger-footer">
+          <span id="tableResultCount">Showing 0 accounts</span>
+          <span class="ledger-hint">Select any account row to inspect factor weights, usage history, and webhook replay controls.</span>
+        </div>
       </section>
 
-      <!-- Right: Live Alert Feed & Routing Playbook Rules -->
-      <aside class="side-column">
-        <section class="panel feed-panel">
-          <div class="panel-header">
-            <div>
-              <h2 class="panel-title">Live Playbook Dispatches</h2>
-              <p class="panel-subtitle">Idempotent Slack, PagerDuty &amp; CRM alerts</p>
+      <section id="webhooksView" class="ledger-card hidden">
+        <div class="subview-grid">
+          <div class="subview-pane">
+            <div class="pane-header">
+              <h2 class="pane-title">Ingested webhooks</h2>
+              <span class="pane-meta">Deduplicated by UNIQUE(idempotency_key) inside SQLite WAL</span>
+            </div>
+            <div class="table-scroll">
+              <table class="ledger-table">
+                <thead>
+                  <tr>
+                    <th>Source</th>
+                    <th>Event type</th>
+                    <th>Account</th>
+                    <th>Idempotency key</th>
+                    <th class="num-col">Risk change</th>
+                  </tr>
+                </thead>
+                <tbody id="eventsLogBody"></tbody>
+              </table>
             </div>
           </div>
-          <div id="dispatchFeed" class="dispatch-list">
-            <div class="empty-feed">No playbook dispatches yet.</div>
-          </div>
-        </section>
 
-        <section class="panel rules-panel">
-          <div class="panel-header">
-            <div>
-              <h2 class="panel-title">Automated Routing Rules</h2>
-              <p class="panel-subtitle">Evaluated on every ingested webhook</p>
+          <div class="subview-pane pane-bordered-top">
+            <div class="pane-header">
+              <h2 class="pane-title">Playbook dispatches</h2>
+              <span class="pane-meta">Deterministic SHA-256 dispatch keys prevent duplicate alerts</span>
+            </div>
+            <div class="table-scroll">
+              <table class="ledger-table">
+                <thead>
+                  <tr>
+                    <th>Priority</th>
+                    <th>Rule</th>
+                    <th>Account</th>
+                    <th>Destination</th>
+                    <th>Dispatch key</th>
+                  </tr>
+                </thead>
+                <tbody id="dispatchesLogBody"></tbody>
+              </table>
             </div>
           </div>
-          <div id="rulesList" class="rules-list"></div>
-        </section>
-      </aside>
+        </div>
+      </section>
+
+      <section id="rulesView" class="ledger-card hidden">
+        <div class="pane-header">
+          <h2 class="pane-title">Automated routing rules</h2>
+          <span class="pane-meta">Evaluated synchronously inside each ingested webhook transaction</span>
+        </div>
+        <div class="table-scroll">
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th>Priority</th>
+                <th>Rule name</th>
+                <th>Match condition</th>
+                <th>Destination channel</th>
+                <th class="num-col">Status</th>
+              </tr>
+            </thead>
+            <tbody id="rulesTableBody"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
   </div>
 
-  <!-- Slide-Over Account Detail Drawer -->
-  <div id="drawerBackdrop" class="drawer-backdrop hidden" aria-hidden="true"></div>
-  <aside id="accountDrawer" class="drawer hidden" aria-label="Account Intelligence Detail">
-    <div class="drawer-header">
-      <div>
-        <div class="drawer-badges" id="drawerBadges"></div>
-        <h2 class="drawer-title" id="drawerAccountName">Account Name</h2>
-        <p class="drawer-subtitle" id="drawerMeta">domain.io · Enterprise · Owner</p>
+  <div id="drawerBackdrop" class="drawer-backdrop" data-open="false" aria-hidden="true"></div>
+
+  <aside id="accountDrawer" class="detail-drawer" data-open="false" aria-label="Account detail">
+    <div class="drawer-top">
+      <div class="drawer-heading-group">
+        <div class="drawer-title-line">
+          <h2 class="drawer-title" id="drawerAccountName">Account</h2>
+          <span class="drawer-risk-readout" id="drawerRiskReadout"></span>
+        </div>
+        <p class="drawer-meta" id="drawerMeta"></p>
       </div>
-      <button id="btnCloseDrawer" class="btn-icon" type="button" aria-label="Close drawer">&times;</button>
+      <button id="btnCloseDrawer" class="btn-close" type="button" aria-label="Close detail panel">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+      </button>
     </div>
 
-    <div class="drawer-body">
-      <!-- Top Metrics Row inside Drawer -->
-      <div class="drawer-stat-grid" id="drawerStats"></div>
+    <div class="drawer-metrics-bar" id="drawerStats"></div>
 
-      <!-- Expansion Callout Banner (conditional) -->
-      <div id="drawerExpansionBanner" class="expansion-banner hidden"></div>
+    <div id="drawerExpansionBanner" class="expansion-callout hidden"></div>
 
-      <!-- Usage Sparkline Card -->
-      <section class="drawer-section">
-        <div class="section-title-row">
-          <h3>8-Week Product Telemetry Trend</h3>
-          <span id="drawerVelocityBadge" class="velocity-pill">0%</span>
+    <div class="drawer-content">
+      <section class="drawer-block">
+        <div class="block-header">
+          <h3 class="block-title">8-week active usage</h3>
+          <span id="drawerVelocityLabel" class="mono-stat"></span>
         </div>
-        <div id="drawerSparkline" class="sparkline-box"></div>
+        <div id="drawerSparkline" class="chart-frame"></div>
       </section>
 
-      <!-- Explainable Risk Breakdown -->
-      <section class="drawer-section">
-        <div class="section-title-row">
-          <h3>Explainable Risk Score Breakdown</h3>
-          <span id="drawerTotalRiskLabel" class="mono-label">0 / 100 pts</span>
+      <section class="drawer-block">
+        <div class="block-header">
+          <h3 class="block-title">Score breakdown</h3>
+          <span id="drawerTotalRiskLabel" class="mono-stat"></span>
         </div>
-        <div id="drawerRiskFactors" class="risk-factors-list"></div>
+        <div id="drawerRiskFactors" class="factors-table"></div>
       </section>
 
-      <!-- Interactive Simulate Event / Run Playbook Lab -->
-      <section class="drawer-section action-lab">
-        <div class="section-title-row">
-          <h3>Simulate Webhook / Run Playbook</h3>
-          <span class="mono-label">LIVE PIPELINE</span>
+      <section class="drawer-block tester-block">
+        <div class="block-header">
+          <h3 class="block-title">Idempotent webhook and playbook tester</h3>
+          <span id="activeIdempKeyLabel" class="mono-key"></span>
         </div>
-        <p class="lab-hint">Fire a real multi-channel event into <code>POST /api/events/ingest</code> or replay the last idempotency key to test deduplication.</p>
-
-        <div class="sim-buttons-grid">
-          <button class="btn btn-sim btn-sim-danger" data-sim="invoice.payment_failed" type="button">
-            + Failed Stripe Invoice
-          </button>
-          <button class="btn btn-sim btn-sim-warn" data-sim="telemetry.usage_drop" type="button">
-            + 38% Telemetry Drop
-          </button>
-          <button class="btn btn-sim btn-sim-danger" data-sim="support.ticket_escalated" type="button">
-            + P1 Support Escalation
-          </button>
-          <button class="btn btn-sim btn-sim-success" data-sim="telemetry.seat_spike" type="button">
-            + Seat &amp; Usage Spike
-          </button>
-          <button class="btn btn-sim btn-sim-neutral" data-sim="invoice.paid" type="button">
-            ✓ Invoice Paid (Recover)
-          </button>
-          <button id="btnReplayDuplicate" class="btn btn-sim btn-sim-dedup" type="button" disabled>
-            ↺ Replay Last Key (Dedup)
-          </button>
-        </div>
-
-        <div class="playbook-runner-bar">
-          <select id="drawerPlaybookSelect" class="select-control grow">
-            <option value="">Auto-Select Best Playbook</option>
-            <option value="rule_ent_churn_rescue">Enterprise Critical Churn Rescue</option>
-            <option value="rule_dunning_recovery">Automated Billing &amp; Dunning Recovery</option>
-            <option value="rule_p1_support_swarm">P1 Support Escalation Swarm</option>
-            <option value="rule_expansion_upsell">Expansion Capacity &amp; Upsell Signal</option>
-          </select>
-          <button id="btnRunPlaybook" class="btn btn-primary" type="button">
-            Run Playbook
-          </button>
+        <div class="tester-controls">
+          <div class="tester-row">
+            <select id="simEventSelect" class="control-select grow" aria-label="Select webhook event type">
+              <option value="invoice.payment_failed">Stripe: invoice.payment_failed</option>
+              <option value="telemetry.usage_drop">Telemetry: telemetry.usage_drop (-38%)</option>
+              <option value="support.ticket_escalated">Zendesk: support.ticket_escalated (P1)</option>
+              <option value="telemetry.seat_spike">Telemetry: telemetry.seat_spike (+24%)</option>
+              <option value="invoice.paid">Stripe: invoice.paid (clear dunning)</option>
+            </select>
+            <button id="btnSendWebhook" class="btn btn-primary" type="button">
+              Send test webhook
+            </button>
+            <button id="btnReplayDuplicate" class="btn btn-secondary" type="button">
+              Replay same key
+            </button>
+          </div>
+          <div class="tester-row">
+            <select id="drawerPlaybookSelect" class="control-select grow" aria-label="Select playbook rule">
+              <option value="">Auto-match routing rule</option>
+              <option value="rule_ent_churn_rescue">Enterprise Critical Churn Rescue</option>
+              <option value="rule_dunning_recovery">Automated Billing &amp; Dunning Recovery</option>
+              <option value="rule_p1_support_swarm">P1 Support Escalation Swarm</option>
+              <option value="rule_expansion_upsell">Expansion Capacity &amp; Upsell Signal</option>
+            </select>
+            <button id="btnRunPlaybook" class="btn btn-secondary" type="button">
+              Run playbook
+            </button>
+          </div>
         </div>
       </section>
 
-      <!-- Recent Ingested Events & Playbook Dispatches -->
-      <section class="drawer-section">
-        <div class="section-title-row">
-          <h3>Recent Account Events &amp; Dispatches</h3>
+      <section class="drawer-block">
+        <div class="block-header">
+          <h3 class="block-title">Recent events and dispatches</h3>
+          <span id="drawerEventCountLabel" class="mono-stat"></span>
         </div>
-        <div id="drawerTimeline" class="timeline-list"></div>
+        <div id="drawerTimeline" class="event-log-list"></div>
       </section>
     </div>
   </aside>
 
-  <!-- Toast Notification -->
-  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <div id="toastContainer" class="toast-stack" aria-live="polite"></div>
 
   <script type="module" src="/app.js"></script>
 </body>

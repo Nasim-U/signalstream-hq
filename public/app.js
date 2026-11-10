@@ -1,24 +1,18 @@
 const state = {
+  activeView: 'all',
   riskTier: 'All',
   segment: 'All',
   owner: 'All',
   search: '',
-  sortBy: 'risk_score',
+  sortBy: 'arr',
   sortDir: 'desc',
   selectedAccountId: null,
-  lastSimulatedPayload: null,
+  replayEventPayload: null,
   ownersInitialized: false,
 };
 
 function fmtCurrency(num) {
-  return '$' + Number(num || 0).toLocaleString('en-US');
-}
-
-function fmtCompactCurrency(num) {
-  const n = Number(num || 0);
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1_000)}k`;
-  return `$${n}`;
+  return '$' + Math.round(Number(num || 0)).toLocaleString('en-US');
 }
 
 function escapeHtml(str) {
@@ -29,30 +23,37 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function tierBadgeClass(tier) {
-  switch (tier) {
-    case 'Critical':
-      return 'badge-critical';
-    case 'High':
-      return 'badge-high';
-    case 'Moderate':
-      return 'badge-moderate';
-    default:
-      return 'badge-healthy';
+function statusDotClass(score) {
+  if (score >= 75) return 'dot-critical';
+  if (score >= 28) return 'dot-elevated';
+  return 'dot-healthy';
+}
+
+function strokeForVelocity(velPct, riskScore) {
+  if (velPct <= -15 || riskScore >= 75) return '#DC2626';
+  if (velPct < -5 || riskScore >= 28) return '#D97706';
+  if (velPct >= 10) return '#16A34A';
+  return '#2563EB';
+}
+
+function formatBillingLabel(status, retries) {
+  const retryWord = retries === 1 ? 'retry' : 'retries';
+  if (status === 'past_due') {
+    return retries > 0 ? `Past due (${retries} ${retryWord})` : 'Past due';
   }
+  if (status === 'uncollectible') {
+    return `Uncollectible (${retries} ${retryWord})`;
+  }
+  if (retries > 0) {
+    return `Active (${retries} ${retryWord})`;
+  }
+  return 'Active';
 }
 
-function riskColor(score) {
-  if (score >= 75) return '#f43f5e';
-  if (score >= 50) return '#f59e0b';
-  if (score >= 28) return '#38bdf8';
-  return '#10b981';
-}
-
-function renderMiniSparkline(points, strokeColor) {
+function renderInlineSparkline(points, strokeColor) {
   const arr = Array.isArray(points) && points.length > 1 ? points : [10, 10];
-  const w = 74;
-  const h = 24;
+  const w = 64;
+  const h = 20;
   const min = Math.min(...arr);
   const max = Math.max(...arr);
   const span = max - min || 1;
@@ -63,61 +64,76 @@ function renderMiniSparkline(points, strokeColor) {
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(' ');
+
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
-    <polyline fill="none" stroke="${strokeColor}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" points="${coords}" />
+    <polyline fill="none" stroke="${strokeColor}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" points="${coords}" />
   </svg>`;
 }
 
-function renderLargeSparkline(points, velocityPct) {
+function renderUsageChart(points, baselineAvg, velocityPct, riskScore) {
   const arr = Array.isArray(points) && points.length > 1 ? points : [100, 100];
-  const w = 510;
-  const h = 110;
-  const padX = 14;
-  const padY = 14;
-  const min = Math.min(...arr) * 0.92;
-  const max = Math.max(...arr) * 1.05;
+  const w = 516;
+  const h = 98;
+  const padLeft = 18;
+  const padRight = 18;
+  const padTop = 16;
+  const padBottom = 18;
+
+  const allVals = baselineAvg ? [...arr, baselineAvg] : arr;
+  const min = Math.min(...allVals) * 0.88;
+  const max = Math.max(...allVals) * 1.06;
   const span = max - min || 1;
-  const color = velocityPct < -10 ? '#f43f5e' : velocityPct >= 10 ? '#10b981' : '#38bdf8';
+  const stroke = strokeForVelocity(velocityPct, riskScore);
+
+  const yFor = (val) =>
+    h - padBottom - ((val - min) / span) * (h - padTop - padBottom);
 
   const pts = arr.map((v, idx) => {
-    const x = padX + (idx / (arr.length - 1)) * (w - padX * 2);
-    const y = h - padY - ((v - min) / span) * (h - padY * 2);
-    return { x, y, v, week: `W-${arr.length - 1 - idx}` };
+    const x =
+      padLeft + (idx / (arr.length - 1)) * (w - padLeft - padRight);
+    const y = yFor(v);
+    const label = idx === arr.length - 1 ? 'Now' : `W-${arr.length - 1 - idx}`;
+    return { x, y, v, label };
   });
 
   const linePoints = pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-  const areaPoints = `${pts[0].x.toFixed(1)},${h - padY} ${linePoints} ${pts[pts.length - 1].x.toFixed(1)},${h - padY}`;
+  const areaPoints = `${pts[0].x.toFixed(1)},${(h - padBottom).toFixed(1)} ${linePoints} ${pts[pts.length - 1].x.toFixed(1)},${(h - padBottom).toFixed(1)}`;
+  const baselineY = yFor(baselineAvg || arr[0]).toFixed(1);
 
-  const circles = pts
+  const markers = pts
     .map(
-      (p) =>
-        `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.2" fill="${color}" />
-         <text x="${p.x.toFixed(1)}" y="${Math.max(11, p.y - 7).toFixed(1)}" fill="#94a3b8" font-size="9.5" text-anchor="middle" font-family="monospace">${p.v}</text>`
+      (p) => `
+      <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.6" fill="${stroke}" />
+      <text x="${p.x.toFixed(1)}" y="${Math.max(10, p.y - 6).toFixed(1)}" fill="#5A5F6B" font-size="9.5" text-anchor="middle" font-family="JetBrains Mono, monospace">${p.v.toLocaleString('en-US')}</text>
+      <text x="${p.x.toFixed(1)}" y="${h - 4}" fill="#7C8290" font-size="9" text-anchor="middle" font-family="JetBrains Mono, monospace">${p.label}</text>`
     )
     .join('');
 
-  return `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="8-week usage trend">
+  return `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="8-week active usage chart">
     <defs>
-      <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${color}" stop-opacity="0.32" />
-        <stop offset="100%" stop-color="${color}" stop-opacity="0.0" />
+      <linearGradient id="usageAreaFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${stroke}" stop-opacity="0.12" />
+        <stop offset="100%" stop-color="${stroke}" stop-opacity="0.01" />
       </linearGradient>
     </defs>
-    <polygon points="${areaPoints}" fill="url(#sparkFill)" />
-    <polyline fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" points="${linePoints}" />
-    ${circles}
+    <line x1="${padLeft}" y1="${padTop}" x2="${w - padRight}" y2="${padTop}" stroke="#EEF0F4" stroke-width="1" />
+    <line x1="${padLeft}" y1="${h - padBottom}" x2="${w - padRight}" y2="${h - padBottom}" stroke="#E2E4E9" stroke-width="1" />
+    <line x1="${padLeft}" y1="${baselineY}" x2="${w - padRight}" y2="${baselineY}" stroke="#9CA3AF" stroke-width="1" stroke-dasharray="3 3" />
+    <polygon points="${areaPoints}" fill="url(#usageAreaFill)" />
+    <polyline fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${linePoints}" />
+    ${markers}
   </svg>`;
 }
 
 function showToast(message, isDedup = false) {
   const container = document.getElementById('toastContainer');
   const el = document.createElement('div');
-  el.className = `toast ${isDedup ? 'toast-dedup' : ''}`;
+  el.className = `toast-item ${isDedup ? 'toast-dedup' : ''}`;
   el.textContent = message;
   container.appendChild(el);
   setTimeout(() => {
     el.remove();
-  }, 4200);
+  }, 4000);
 }
 
 function buildFilterQuery() {
@@ -131,33 +147,66 @@ function buildFilterQuery() {
   return params.toString();
 }
 
+function syncHeaderCopy(totalAccounts = 44) {
+  const titleEl = document.getElementById('workspaceTitle');
+  const subEl = document.getElementById('workspaceSubtitle');
+
+  if (state.activeView === 'webhooks') {
+    titleEl.textContent = 'Webhook ingestion log';
+    subEl.textContent =
+      'Stripe, Zendesk, and product telemetry events deduplicated in SQLite WAL alongside routed dispatches';
+  } else if (state.activeView === 'rules') {
+    titleEl.textContent = 'Automated routing rules';
+    subEl.textContent =
+      'Thresholds evaluated inside each webhook transaction before dispatching Slack, PagerDuty, or CRM tasks';
+  } else if (state.riskTier === 'Critical') {
+    titleEl.textContent = 'Critical risk accounts';
+    subEl.textContent =
+      'Subscriptions scoring 75 or higher across usage contraction, dunning retries, and open P1 incidents';
+  } else if (state.riskTier === 'Expansion') {
+    titleEl.textContent = 'Expansion candidates';
+    subEl.textContent =
+      'Healthy subscriptions at 88% or higher seat utilization with positive 7-day usage growth';
+  } else {
+    titleEl.textContent = 'Account health ledger';
+    subEl.textContent = `Billing, product usage, and support signals across ${totalAccounts} B2B subscriptions`;
+  }
+}
+
 async function loadSummary() {
   const res = await fetch('/api/summary');
   const s = await res.json();
 
-  document.getElementById('kpiTotalArr').textContent = fmtCompactCurrency(s.total_arr);
+  document.getElementById('kpiTotalArr').textContent = fmtCurrency(s.total_arr);
   document.getElementById('kpiAccountCount').textContent = `${s.total_accounts} accounts`;
-  document.getElementById('kpiAvgHealth').textContent = `Portfolio avg health: ${s.avg_health_score}/100`;
 
-  document.getElementById('kpiAtRiskArr').textContent = fmtCompactCurrency(s.at_risk_arr);
-  document.getElementById('kpiAtRiskCount').textContent = `${s.at_risk_accounts} at-risk`;
-  const pctExposed = s.total_arr > 0 ? Math.round((s.at_risk_arr / s.total_arr) * 100) : 0;
-  document.getElementById('kpiRiskBreakdown').textContent =
-    `${pctExposed}% of ARR (${s.tiers.Critical.count} Critical, ${s.tiers.High.count} High)`;
+  document.getElementById('kpiAtRiskArr').textContent = fmtCurrency(s.at_risk_arr);
+  document.getElementById('kpiAtRiskCount').textContent = `${s.at_risk_accounts} accounts`;
 
-  document.getElementById('kpiExpansionArr').textContent = `+${fmtCompactCurrency(s.expansion_pipeline_arr)}`;
+  document.getElementById('kpiExpansionArr').textContent = `+${fmtCurrency(s.expansion_pipeline_arr)}`;
   document.getElementById('kpiExpansionCount').textContent = `${s.expansion_accounts} eligible`;
 
+  document.getElementById('kpiEventsIngested').textContent = String(s.events_ingested);
+  document.getElementById('kpiDedupBlocked').textContent = `${s.duplicates_blocked} duplicates blocked`;
+
   document.getElementById('kpiPlaybooksFired').textContent = String(s.playbooks_fired);
-  document.getElementById('kpiDedupBlocked').textContent = `${s.duplicates_blocked} deduped`;
-  document.getElementById('kpiEventsIngested').textContent =
-    `${s.events_ingested} unique webhooks ingested`;
+  document.getElementById('kpiAvgHealth').textContent = `Avg health ${s.avg_health_score} / 100`;
+
+  document.getElementById('navCountAll').textContent = String(s.total_accounts);
+  document.getElementById('navCountCritical').textContent = String(s.tiers.Critical.count);
+  document.getElementById('navCountExpansion').textContent = String(s.expansion_accounts);
+  document.getElementById('navCountWebhooks').textContent = String(s.events_ingested);
+  document.getElementById('railDedupStat').textContent = `${s.duplicates_blocked} duplicate keys blocked`;
+
+  syncHeaderCopy(s.total_accounts);
 
   if (!state.ownersInitialized && Array.isArray(s.owners)) {
     const ownerSelect = document.getElementById('ownerSelect');
     ownerSelect.innerHTML =
-      '<option value="All">All Owners</option>' +
-      s.owners.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+      '<option value="All">All owners</option>' +
+      s.owners
+        .map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`)
+        .join('');
     state.ownersInitialized = true;
   }
 }
@@ -167,241 +216,369 @@ async function loadAccounts() {
   const res = await fetch(`/api/accounts?${qs}`);
   const data = await res.json();
   const tbody = document.getElementById('accountsTableBody');
-  document.getElementById('tableResultCount').textContent = `Showing ${data.count} account${data.count === 1 ? '' : 's'}`;
+
+  document.getElementById('tableResultCount').textContent =
+    `Showing ${data.count} ${data.count === 1 ? 'account' : 'accounts'}`;
 
   if (!data.accounts.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">No accounts match the active filters.</td></tr>';
+    tbody.innerHTML =
+      '<tr><td colspan="9" class="empty-state">No accounts match the selected filters. Reset filters or search terms to view all subscriptions.</td></tr>';
     return;
   }
 
   tbody.innerHTML = data.accounts
     .map((a) => {
-      const color = riskColor(a.risk_score);
+      const dotClass = statusDotClass(a.risk_score);
+      const sparkColor = strokeForVelocity(a.usage_velocity_pct, a.risk_score);
       const velSign = a.usage_velocity_pct > 0 ? '+' : '';
-      const velColor =
+      const velClass =
         a.usage_velocity_pct <= -15
-          ? '#fb7185'
+          ? 'text-critical'
           : a.usage_velocity_pct >= 12
-          ? '#34d399'
-          : '#94a3b8';
-      const sparkColor =
-        a.usage_velocity_pct <= -15
-          ? '#f43f5e'
-          : a.usage_velocity_pct >= 12
-          ? '#10b981'
-          : '#38bdf8';
+          ? 'text-healthy'
+          : '';
 
-      const billingMeta =
-        a.billing_status !== 'active' || a.failed_payments > 0
-          ? `<div class="billing-warn">${escapeHtml(a.billing_status)} · ${a.failed_payments} retry fail</div>`
-          : `<div class="sub-meta">Billing active</div>`;
+      const isBadBilling =
+        a.billing_status !== 'active' || a.failed_payments > 0;
+      const billingText = formatBillingLabel(a.billing_status, a.failed_payments);
 
-      const expBadge = a.expansion_eligible
-        ? `<span class="badge badge-expansion">+${fmtCompactCurrency(a.expansion_arr)} EXPANSION</span>`
+      const expFlag = a.expansion_eligible
+        ? `<span class="inline-flag">+${fmtCurrency(a.expansion_arr)}</span>`
         : '';
 
-      const seatPct = Math.round(a.seat_utilization * 100);
+      const p1Flag =
+        a.open_p1_tickets > 0
+          ? `<span class="inline-flag inline-flag-p1">${a.open_p1_tickets} P1</span>`
+          : '';
 
-      return `<tr class="account-row" data-account-id="${escapeHtml(a.id)}">
+      const selectedClass =
+        state.selectedAccountId === a.id ? 'is-selected' : '';
+
+      return `<tr class="account-row ${selectedClass}" data-account-id="${escapeHtml(a.id)}">
         <td>
-          <div class="acct-name">${escapeHtml(a.name)} ${expBadge}</div>
-          <div class="acct-domain">${escapeHtml(a.domain)} · ${escapeHtml(a.id)}</div>
+          <div class="acct-primary">
+            <span class="acct-name">${escapeHtml(a.name)}</span>
+            ${expFlag}
+          </div>
+          <div class="acct-sub">${escapeHtml(a.domain)}</div>
         </td>
+        <td>${escapeHtml(a.segment)}</td>
+        <td>${escapeHtml(a.owner)}</td>
         <td>
-          <div>${escapeHtml(a.segment)}</div>
-          <div class="sub-meta">${escapeHtml(a.owner)}</div>
+          <span class="${isBadBilling ? 'billing-past-due' : 'billing-ok'}">${escapeHtml(billingText)}</span>
         </td>
-        <td>
-          <div style="font-weight:700;font-family:var(--font-mono)">${fmtCurrency(a.arr)}</div>
-          ${billingMeta}
+        <td class="num-col mono-strong">${fmtCurrency(a.arr)}</td>
+        <td class="num-col mono-num">
+          ${a.seats_active} / ${a.seats_purchased}
         </td>
-        <td>
-          <div class="risk-cell">
-            <div class="risk-top">
-              <span class="risk-num" style="color:${color}">${a.risk_score}/100</span>
-              <span class="badge ${tierBadgeClass(a.risk_tier)}">${escapeHtml(a.risk_tier)}</span>
-            </div>
-            <div class="progress-track">
-              <div class="progress-fill" style="width:${a.risk_score}%;background:${color}"></div>
-            </div>
+        <td class="num-col">
+          <div class="usage-trend-cell">
+            ${renderInlineSparkline(a.usage_history, sparkColor)}
+            <span class="usage-delta ${velClass}">${velSign}${a.usage_velocity_pct.toFixed(1)}%</span>
           </div>
         </td>
-        <td>
-          <div class="velocity-cell">
-            ${renderMiniSparkline(a.usage_history, sparkColor)}
-            <span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:${velColor}">
-              ${velSign}${a.usage_velocity_pct}%
-            </span>
-          </div>
+        <td class="num-col mono-num">
+          ${a.renewal_days}d${p1Flag}
         </td>
-        <td>
-          <div>${a.seats_active}/${a.seats_purchased} seats (${seatPct}%)</div>
-          <div class="sub-meta">Renews in ${a.renewal_days}d${a.open_p1_tickets > 0 ? ` · <span class="text-rose">${a.open_p1_tickets} P1</span>` : ''}</div>
+        <td class="num-col">
+          <div class="risk-readout">
+            <span class="status-dot ${dotClass}" aria-hidden="true"></span>
+            <span class="risk-score-strong">${a.risk_score}</span>
+            <span class="risk-denom">/ 100</span>
+          </div>
         </td>
       </tr>`;
     })
     .join('');
 }
 
-async function loadDispatches() {
-  const res = await fetch('/api/playbooks/dispatches?limit=20');
-  const { dispatches } = await res.json();
-  const container = document.getElementById('dispatchFeed');
+async function loadWebhookLogView() {
+  const [eventsRes, dispRes] = await Promise.all([
+    fetch('/api/events?limit=40'),
+    fetch('/api/playbooks/dispatches?limit=30'),
+  ]);
+  const { events } = await eventsRes.json();
+  const { dispatches } = await dispRes.json();
 
-  if (!dispatches.length) {
-    container.innerHTML = '<div class="empty-feed">No playbooks dispatched yet.</div>';
-    return;
+  const eventsBody = document.getElementById('eventsLogBody');
+  if (!events.length) {
+    eventsBody.innerHTML =
+      '<tr><td colspan="5" class="empty-state">No webhook events ingested yet.</td></tr>';
+  } else {
+    eventsBody.innerHTML = events
+      .map(
+        (e) => `<tr class="account-row" data-account-id="${escapeHtml(e.account_id)}">
+          <td><span class="event-source-tag">${escapeHtml(e.source)}</span></td>
+          <td class="mono-num">${escapeHtml(e.event_type)}</td>
+          <td>
+            <span class="acct-name">${escapeHtml(e.account_name)}</span>
+            <span class="cell-secondary">(${escapeHtml(e.account_id)})</span>
+          </td>
+          <td class="mono-num cell-secondary">${escapeHtml(e.idempotency_key)}</td>
+          <td class="num-col mono-num">${e.risk_before} to ${e.risk_after}</td>
+        </tr>`
+      )
+      .join('');
   }
 
-  container.innerHTML = dispatches
+  const dispBody = document.getElementById('dispatchesLogBody');
+  if (!dispatches.length) {
+    dispBody.innerHTML =
+      '<tr><td colspan="5" class="empty-state">No playbooks dispatched yet.</td></tr>';
+  } else {
+    dispBody.innerHTML = dispatches
+      .map(
+        (d) => `<tr class="account-row" data-account-id="${escapeHtml(d.account_id)}">
+          <td class="mono-strong">${escapeHtml(d.priority)}</td>
+          <td>
+            <div class="acct-name">${escapeHtml(d.rule_name)}</div>
+            <div class="acct-sub">${escapeHtml(d.summary)}</div>
+          </td>
+          <td>${escapeHtml(d.account_name)}</td>
+          <td class="mono-num cell-secondary">${escapeHtml(d.channel)}</td>
+          <td class="mono-num cell-secondary">${escapeHtml(d.dispatch_key)}</td>
+        </tr>`
+      )
+      .join('');
+  }
+}
+
+async function loadRulesView() {
+  const res = await fetch('/api/playbooks/rules');
+  const { rules } = await res.json();
+  document.getElementById('navCountRules').textContent = String(
+    rules.filter((r) => r.enabled).length
+  );
+
+  const tbody = document.getElementById('rulesTableBody');
+  tbody.innerHTML = rules
     .map(
-      (d) => `<div class="dispatch-card prio-${escapeHtml(d.priority)}" data-account-id="${escapeHtml(d.account_id)}">
-        <div class="dispatch-top">
-          <span class="dispatch-rule">${escapeHtml(d.rule_name)}</span>
-          <span class="badge ${d.priority === 'P1' ? 'badge-critical' : d.priority === 'P2' ? 'badge-high' : 'badge-healthy'}">${escapeHtml(d.priority)}</span>
-        </div>
-        <div class="dispatch-summary">${escapeHtml(d.summary)}</div>
-        <div class="dispatch-footer">
-          <span>${escapeHtml(d.channel.split('+')[0].trim())}</span>
-          <span>${escapeHtml(d.dispatch_key)}</span>
-        </div>
-      </div>`
+      (r) => `<tr>
+        <td class="mono-strong">${escapeHtml(r.priority)}</td>
+        <td>
+          <div class="acct-name">${escapeHtml(r.name)}</div>
+          <div class="acct-sub">${escapeHtml(r.description)}</div>
+        </td>
+        <td class="mono-num cell-secondary">${escapeHtml(r.condition_summary)}</td>
+        <td class="mono-num cell-secondary">${escapeHtml(r.channel)}</td>
+        <td class="num-col">
+          <label class="rule-toggle-wrap">
+            <input type="checkbox" class="rule-toggle" data-rule-id="${escapeHtml(r.id)}" ${r.enabled ? 'checked' : ''} />
+            <span>${r.enabled ? 'Enabled' : 'Paused'}</span>
+          </label>
+        </td>
+      </tr>`
     )
     .join('');
 }
 
-async function loadRules() {
-  const res = await fetch('/api/playbooks/rules');
-  const { rules } = await res.json();
-  const container = document.getElementById('rulesList');
+function setView(viewName) {
+  state.activeView = viewName;
 
-  container.innerHTML = rules
-    .map(
-      (r) => `<div class="rule-item">
-        <div class="rule-head">
-          <span class="rule-name">${escapeHtml(r.name)}</span>
-          <label class="toggle-label">
-            <input type="checkbox" class="rule-toggle" data-rule-id="${escapeHtml(r.id)}" ${r.enabled ? 'checked' : ''} />
-            Active
-          </label>
-        </div>
-        <div class="sub-meta">${escapeHtml(r.channel)}</div>
-        <div class="rule-cond">${escapeHtml(r.condition_summary)}</div>
-      </div>`
-    )
-    .join('');
+  document.querySelectorAll('.rail-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.view === viewName);
+  });
+
+  const accountsView = document.getElementById('accountsView');
+  const webhooksView = document.getElementById('webhooksView');
+  const rulesView = document.getElementById('rulesView');
+
+  accountsView.classList.toggle(
+    'hidden',
+    viewName === 'webhooks' || viewName === 'rules'
+  );
+  webhooksView.classList.toggle('hidden', viewName !== 'webhooks');
+  rulesView.classList.toggle('hidden', viewName !== 'rules');
+
+  if (viewName === 'all') {
+    state.riskTier = 'All';
+    state.sortBy = 'arr';
+    state.sortDir = 'desc';
+    document.getElementById('sortSelect').value = 'arr:desc';
+    syncTierTabButtons();
+    loadAccounts();
+  } else if (viewName === 'critical') {
+    state.riskTier = 'Critical';
+    state.sortBy = 'risk_score';
+    state.sortDir = 'desc';
+    document.getElementById('sortSelect').value = 'risk_score:desc';
+    syncTierTabButtons();
+    loadAccounts();
+  } else if (viewName === 'expansion') {
+    state.riskTier = 'Expansion';
+    state.sortBy = 'arr';
+    state.sortDir = 'desc';
+    document.getElementById('sortSelect').value = 'arr:desc';
+    syncTierTabButtons();
+    loadAccounts();
+  } else if (viewName === 'webhooks') {
+    loadWebhookLogView();
+  } else if (viewName === 'rules') {
+    loadRulesView();
+  }
+
+  syncHeaderCopy();
+}
+
+function syncTierTabButtons() {
+  document.querySelectorAll('#tierTabs .tier-tab').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tier === state.riskTier);
+  });
 }
 
 async function openAccountDrawer(accountId) {
   state.selectedAccountId = accountId;
+  document.querySelectorAll('#accountsTableBody tr.account-row').forEach((tr) => {
+    tr.classList.toggle('is-selected', tr.dataset.accountId === accountId);
+  });
+
   const res = await fetch(`/api/accounts/${encodeURIComponent(accountId)}`);
   if (!res.ok) return;
   const { account: a, events, dispatches } = await res.json();
 
-  document.getElementById('drawerBackdrop').classList.remove('hidden');
-  document.getElementById('accountDrawer').classList.remove('hidden');
+  document.getElementById('drawerBackdrop').dataset.open = 'true';
+  document.getElementById('accountDrawer').dataset.open = 'true';
 
-  document.getElementById('drawerBadges').innerHTML = `
-    <span class="badge ${tierBadgeClass(a.risk_tier)}">${escapeHtml(a.risk_tier)} Risk (${a.risk_score}/100)</span>
-    <span class="badge badge-moderate">${escapeHtml(a.segment)}</span>
-    ${a.expansion_eligible ? '<span class="badge badge-expansion">Expansion Ready</span>' : ''}
-  `;
   document.getElementById('drawerAccountName').textContent = a.name;
-  document.getElementById('drawerMeta').textContent = `${a.domain} · CSM: ${a.owner} · Account ID: ${a.id}`;
+  document.getElementById('drawerRiskReadout').innerHTML = `
+    <span class="status-dot ${statusDotClass(a.risk_score)}" aria-hidden="true"></span>
+    <span>${escapeHtml(a.risk_tier)}</span>
+    <span class="risk-score-strong">${a.risk_score} / 100</span>
+  `;
+  document.getElementById('drawerMeta').textContent =
+    `${a.domain}, ${a.segment}, owner ${a.owner}, ID ${a.id}`;
+
+  const seatPct = Math.round(a.seat_utilization * 100);
+  const billingLabel = formatBillingLabel(a.billing_status, a.failed_payments);
 
   document.getElementById('drawerStats').innerHTML = `
-    <div class="mini-stat">
-      <div class="mini-stat-label">Current ARR</div>
-      <div class="mini-stat-val">${fmtCurrency(a.arr)}</div>
+    <div class="drawer-metric-cell">
+      <span class="drawer-metric-label">Annual contract</span>
+      <span class="drawer-metric-val">${fmtCurrency(a.arr)}</span>
     </div>
-    <div class="mini-stat">
-      <div class="mini-stat-label">Health Score</div>
-      <div class="mini-stat-val" style="color:${riskColor(a.risk_score)}">${a.health_score}/100</div>
+    <div class="drawer-metric-cell">
+      <span class="drawer-metric-label">Billing status</span>
+      <span class="drawer-metric-val ${a.billing_status !== 'active' ? 'text-critical' : ''}">${escapeHtml(billingLabel)}</span>
     </div>
-    <div class="mini-stat">
-      <div class="mini-stat-label">Active Seats</div>
-      <div class="mini-stat-val">${a.seats_active}/${a.seats_purchased}</div>
+    <div class="drawer-metric-cell">
+      <span class="drawer-metric-label">Seat usage</span>
+      <span class="drawer-metric-val">${a.seats_active} / ${a.seats_purchased} (${seatPct}%)</span>
     </div>
-    <div class="mini-stat">
-      <div class="mini-stat-label">Renewal Window</div>
-      <div class="mini-stat-val">${a.renewal_days}d</div>
+    <div class="drawer-metric-cell">
+      <span class="drawer-metric-label">Renewal window</span>
+      <span class="drawer-metric-val">${a.renewal_days} days</span>
     </div>
   `;
 
   const expBanner = document.getElementById('drawerExpansionBanner');
   if (a.expansion_eligible) {
     expBanner.classList.remove('hidden');
-    expBanner.innerHTML = `<strong>Expansion Opportunity Detected (+${fmtCurrency(a.expansion_arr)} ARR):</strong> ${escapeHtml(a.expansion_reason)}.`;
+    expBanner.innerHTML =
+      `<strong>Expansion candidate (+${fmtCurrency(a.expansion_arr)} ARR):</strong> ${escapeHtml(a.expansion_reason)}.`;
   } else {
     expBanner.classList.add('hidden');
   }
 
-  const velBadge = document.getElementById('drawerVelocityBadge');
-  const sign = a.usage_velocity_pct > 0 ? '+' : '';
-  velBadge.textContent = `${sign}${a.usage_velocity_pct}% vs 30d avg`;
-  velBadge.style.background =
-    a.usage_velocity_pct < -10 ? 'rgba(244,63,94,0.18)' : 'rgba(16,185,129,0.18)';
-  velBadge.style.color = a.usage_velocity_pct < -10 ? '#fda4af' : '#6ee7b7';
+  const velSign = a.usage_velocity_pct > 0 ? '+' : '';
+  document.getElementById('drawerVelocityLabel').textContent =
+    `${velSign}${a.usage_velocity_pct.toFixed(1)}% vs 30d avg (${a.usage_30d_weekly_avg.toLocaleString('en-US')} wk)`;
 
-  document.getElementById('drawerSparkline').innerHTML = renderLargeSparkline(
+  document.getElementById('drawerSparkline').innerHTML = renderUsageChart(
     a.usage_history,
-    a.usage_velocity_pct
+    a.usage_30d_weekly_avg,
+    a.usage_velocity_pct,
+    a.risk_score
   );
 
-  document.getElementById('drawerTotalRiskLabel').textContent = `${a.risk_score} / 100 risk pts`;
+  document.getElementById('drawerTotalRiskLabel').textContent =
+    `${a.risk_score} / 100 risk points`;
+
   document.getElementById('drawerRiskFactors').innerHTML = a.risk_factors
     .map((f) => {
       const pct = Math.round((f.points / f.max_points) * 100);
       const barColor =
         f.severity === 'critical'
-          ? '#f43f5e'
-          : f.severity === 'warning'
-          ? '#f59e0b'
-          : f.severity === 'watch'
-          ? '#38bdf8'
-          : '#10b981';
-      return `<div class="factor-row">
-        <div class="factor-head">
-          <span>${escapeHtml(f.label)}</span>
-          <span class="factor-pts" style="color:${barColor}">${f.points} / ${f.max_points} pts</span>
+          ? '#DC2626'
+          : f.severity === 'warning' || f.severity === 'watch'
+          ? '#D97706'
+          : '#16A34A';
+
+      return `<div class="factor-item">
+        <div class="factor-line">
+          <span class="factor-name">${escapeHtml(f.label)}</span>
+          <div class="factor-bar-track">
+            <div class="factor-bar-fill" style="width:${pct}%;background-color:${barColor}"></div>
+          </div>
+          <span class="factor-score">${f.points} / ${f.max_points}</span>
         </div>
-        <div class="progress-track">
-          <div class="progress-fill" style="width:${pct}%;background:${barColor}"></div>
-        </div>
-        <div class="factor-summary">${escapeHtml(f.summary)}</div>
+        <div class="factor-reason">${escapeHtml(f.summary)}</div>
       </div>`;
     })
     .join('');
 
-  // Render merged timeline of recent events & dispatches
-  const items = [
-    ...dispatches.map((d) => ({
-      kind: 'dispatch',
-      headLeft: `PLAYBOOK · ${d.rule_name}`,
-      headRight: d.dispatch_key,
-      body: d.summary,
-    })),
+  if (
+    !state.replayEventPayload ||
+    state.replayEventPayload.account_id !== a.id
+  ) {
+    if (events.length > 0) {
+      const latest = events[0];
+      state.replayEventPayload = {
+        idempotency_key: latest.idempotency_key,
+        account_id: a.id,
+        source: latest.source,
+        event_type: latest.event_type,
+        payload: latest.payload || {},
+      };
+    } else {
+      state.replayEventPayload = null;
+    }
+  }
+
+  const replayBtn = document.getElementById('btnReplayDuplicate');
+  const keyLabel = document.getElementById('activeIdempKeyLabel');
+  if (state.replayEventPayload) {
+    replayBtn.disabled = false;
+    keyLabel.textContent = `Key: ${state.replayEventPayload.idempotency_key}`;
+  } else {
+    replayBtn.disabled = true;
+    keyLabel.textContent = 'No prior key recorded';
+  }
+
+  const combinedLog = [
     ...events.map((e) => ({
       kind: 'event',
-      headLeft: `${e.source.toUpperCase()} · ${e.event_type}`,
-      headRight: `risk ${e.risk_before} → ${e.risk_after}`,
-      body: `Idempotency key: ${e.idempotency_key}`,
+      tag: e.source,
+      title: e.event_type,
+      key: e.idempotency_key,
+      delta: `risk ${e.risk_before} to ${e.risk_after}`,
+    })),
+    ...dispatches.map((d) => ({
+      kind: 'dispatch',
+      tag: 'playbook',
+      title: d.rule_name,
+      key: d.dispatch_key,
+      delta: `${d.priority} dispatched`,
     })),
   ];
 
+  document.getElementById('drawerEventCountLabel').textContent =
+    `${events.length} events, ${dispatches.length} dispatches`;
+
   const timelineEl = document.getElementById('drawerTimeline');
-  if (!items.length) {
-    timelineEl.innerHTML = '<div class="sub-meta">No recent webhook events recorded for this account yet.</div>';
+  if (!combinedLog.length) {
+    timelineEl.innerHTML =
+      '<div class="cell-secondary">No webhook events or dispatches recorded for this account yet.</div>';
   } else {
-    timelineEl.innerHTML = items
-      .slice(0, 10)
+    timelineEl.innerHTML = combinedLog
+      .slice(0, 5)
       .map(
-        (it) => `<div class="timeline-item">
-          <div class="timeline-head">
-            <span style="color:${it.kind === 'dispatch' ? '#38bdf8' : '#cbd5e1'}">${escapeHtml(it.headLeft)}</span>
-            <span style="color:#94a3b8">${escapeHtml(it.headRight)}</span>
+        (item) => `<div class="event-log-row">
+          <span class="event-source-tag ${item.kind === 'dispatch' ? 'event-source-dispatch' : ''}">${escapeHtml(item.tag)}</span>
+          <div class="event-main">
+            <span class="event-title">${escapeHtml(item.title)}</span>
+            <span class="event-key-inline">${escapeHtml(item.key)}</span>
           </div>
-          <div class="sub-meta">${escapeHtml(it.body)}</div>
+          <span class="event-delta">${escapeHtml(item.delta)}</span>
         </div>`
       )
       .join('');
@@ -410,27 +587,35 @@ async function openAccountDrawer(accountId) {
 
 function closeDrawer() {
   state.selectedAccountId = null;
-  document.getElementById('drawerBackdrop').classList.add('hidden');
-  document.getElementById('accountDrawer').classList.add('hidden');
+  document.getElementById('drawerBackdrop').dataset.open = 'false';
+  document.getElementById('accountDrawer').dataset.open = 'false';
+  document.querySelectorAll('#accountsTableBody tr.account-row').forEach((tr) => {
+    tr.classList.remove('is-selected');
+  });
 }
 
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadAccounts(), loadDispatches()]);
+  const tasks = [loadSummary(), loadAccounts()];
+  if (state.activeView === 'webhooks') tasks.push(loadWebhookLogView());
+  if (state.activeView === 'rules') tasks.push(loadRulesView());
+  await Promise.all(tasks);
+
   if (state.selectedAccountId) {
     await openAccountDrawer(state.selectedAccountId);
   }
 }
 
-async function simulateWebhook(eventType, replay = false) {
+async function sendWebhook(replay = false) {
   if (!state.selectedAccountId) return;
 
   let body;
-  if (replay && state.lastSimulatedPayload) {
-    body = { ...state.lastSimulatedPayload };
+  if (replay && state.replayEventPayload) {
+    body = { ...state.replayEventPayload };
   } else {
-    const rand = Math.random().toString(36).slice(2, 9);
+    const eventType = document.getElementById('simEventSelect').value;
+    const suffix = Math.random().toString(36).slice(2, 8);
     body = {
-      idempotency_key: `evt_sim_${eventType.replace(/\./g, '_')}_${rand}`,
+      idempotency_key: `evt_live_${eventType.replace(/\./g, '_')}_${suffix}`,
       account_id: state.selectedAccountId,
       event_type: eventType,
       payload:
@@ -439,11 +624,10 @@ async function simulateWebhook(eventType, replay = false) {
           : eventType === 'telemetry.seat_spike'
           ? { boost_pct: 24, added_seats: 8 }
           : eventType === 'support.ticket_escalated'
-          ? { severity: 'P1', subject: 'Production API latency spike' }
+          ? { severity: 'P1', subject: 'API gateway timeout spike' }
           : { attempt_count: 2 },
     };
-    state.lastSimulatedPayload = body;
-    document.getElementById('btnReplayDuplicate').disabled = false;
+    state.replayEventPayload = body;
   }
 
   const res = await fetch('/api/events/ingest', {
@@ -455,16 +639,16 @@ async function simulateWebhook(eventType, replay = false) {
 
   if (result.deduplicated) {
     showToast(
-      `Idempotency Guard Blocked Duplicate! Key "${result.idempotency_key}" returned 200 OK with zero duplicate alerts.`,
+      `Duplicate key ${result.idempotency_key} ignored (HTTP 200). Account score unchanged at ${result.account.risk_score} / 100.`,
       true
     );
   } else {
-    const firedMsg =
+    const dispatchNote =
       result.dispatches.length > 0
-        ? ` → Fired ${result.dispatches.length} playbook(s)!`
+        ? `, ${result.dispatches.length} playbook dispatched`
         : '';
     showToast(
-      `Ingested ${eventType} (Risk ${result.event.risk_before} → ${result.event.risk_after})${firedMsg}`
+      `Processed ${body.event_type} (risk ${result.event.risk_before} to ${result.event.risk_after}${dispatchNote}).`
     );
   }
 
@@ -474,9 +658,7 @@ async function simulateWebhook(eventType, replay = false) {
 async function runPlaybookForSelected() {
   if (!state.selectedAccountId) return;
   const ruleId = document.getElementById('drawerPlaybookSelect').value;
-  const payload = {
-    account_id: state.selectedAccountId,
-  };
+  const payload = { account_id: state.selectedAccountId };
   if (ruleId) payload.rule_id = ruleId;
 
   const res = await fetch('/api/playbooks/run', {
@@ -486,18 +668,36 @@ async function runPlaybookForSelected() {
   });
   const data = await res.json();
   if (data.ok) {
-    showToast(`Dispatched "${data.dispatch.rule_name}" (${data.dispatch.dispatch_key})`);
+    showToast(`Dispatched ${data.dispatch.rule_name} (${data.dispatch.dispatch_key}).`);
     await refreshAll();
   }
 }
 
-// Wire up UI Event Listeners
-document.getElementById('tierPills').addEventListener('click', (e) => {
+/* Event Listeners */
+document.querySelector('.rail-nav').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-view]');
+  if (!btn) return;
+  setView(btn.dataset.view);
+});
+
+document.getElementById('tierTabs').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-tier]');
   if (!btn) return;
-  document.querySelectorAll('#tierPills .pill').forEach((p) => p.classList.remove('active'));
-  btn.classList.add('active');
   state.riskTier = btn.dataset.tier;
+  syncTierTabButtons();
+
+  if (state.riskTier === 'Critical') {
+    state.activeView = 'critical';
+  } else if (state.riskTier === 'Expansion') {
+    state.activeView = 'expansion';
+  } else {
+    state.activeView = 'all';
+  }
+  document.querySelectorAll('.rail-item').forEach((item) => {
+    item.classList.toggle('active', item.dataset.view === state.activeView);
+  });
+
+  syncHeaderCopy();
   loadAccounts();
 });
 
@@ -523,17 +723,14 @@ document.getElementById('sortSelect').addEventListener('change', (e) => {
   loadAccounts();
 });
 
-document.getElementById('accountsTableBody').addEventListener('click', (e) => {
-  const row = e.target.closest('tr[data-account-id]');
-  if (row) openAccountDrawer(row.dataset.accountId);
+document.addEventListener('click', (e) => {
+  const row = e.target.closest('tr.account-row[data-account-id]');
+  if (row && !e.target.closest('input, button, label')) {
+    openAccountDrawer(row.dataset.accountId);
+  }
 });
 
-document.getElementById('dispatchFeed').addEventListener('click', (e) => {
-  const card = e.target.closest('.dispatch-card[data-account-id]');
-  if (card) openAccountDrawer(card.dataset.accountId);
-});
-
-document.getElementById('rulesList').addEventListener('change', async (e) => {
+document.getElementById('rulesTableBody').addEventListener('change', async (e) => {
   const input = e.target.closest('.rule-toggle');
   if (!input) return;
   const ruleId = input.dataset.ruleId;
@@ -543,17 +740,24 @@ document.getElementById('rulesList').addEventListener('change', async (e) => {
     body: JSON.stringify({ enabled: input.checked }),
   });
   showToast(`Routing rule ${input.checked ? 'enabled' : 'paused'}.`);
+  await loadRulesView();
 });
 
 document.getElementById('btnCloseDrawer').addEventListener('click', closeDrawer);
 document.getElementById('drawerBackdrop').addEventListener('click', closeDrawer);
 
-document.querySelectorAll('button[data-sim]').forEach((btn) => {
-  btn.addEventListener('click', () => simulateWebhook(btn.dataset.sim, false));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.selectedAccountId) {
+    closeDrawer();
+  }
+});
+
+document.getElementById('btnSendWebhook').addEventListener('click', () => {
+  sendWebhook(false);
 });
 
 document.getElementById('btnReplayDuplicate').addEventListener('click', () => {
-  simulateWebhook(null, true);
+  sendWebhook(true);
 });
 
 document.getElementById('btnRunPlaybook').addEventListener('click', runPlaybookForSelected);
@@ -568,11 +772,9 @@ document.getElementById('btnExportJson').addEventListener('click', () => {
 
 document.getElementById('btnResetDemo').addEventListener('click', async () => {
   await fetch('/api/admin/reset', { method: 'POST' });
-  state.lastSimulatedPayload = null;
-  document.getElementById('btnReplayDuplicate').disabled = true;
-  showToast('Demo SaaS portfolio reset to baseline (44 accounts).');
+  state.replayEventPayload = null;
+  showToast('Portfolio reset to seeded 44-account baseline.');
   await refreshAll();
 });
 
-// Initial Boot
-Promise.all([loadSummary(), loadAccounts(), loadDispatches(), loadRules()]);
+Promise.all([loadSummary(), loadAccounts(), loadRulesView()]);

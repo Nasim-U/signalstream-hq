@@ -27,7 +27,7 @@ const SEED_ACCOUNTS = [
     billing_status: 'past_due',
     failed_payments: 2,
     open_p1_tickets: 1,
-    open_p2_tickets: 2,
+    open_p2_tickets: 1,
     renewal_days: 28,
   },
   {
@@ -861,6 +861,13 @@ const INITIAL_EVENTS = [
     source: 'stripe',
     event_type: 'invoice.payment_failed',
     payload: { invoice_id: 'in_77319C', amount_due: 6000, attempt_count: 4 },
+  },
+  {
+    idempotency_key: 'evt_zd_seed_008',
+    account_id: 'acct_001',
+    source: 'zendesk',
+    event_type: 'support.ticket_escalated',
+    payload: { ticket_id: 'ZD-4904', severity: 'P2', subject: 'Webhook signature timestamp drift' },
   },
   // Intentional duplicate webhook replays to verify & demonstrate idempotency out of the box
   {

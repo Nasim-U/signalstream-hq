@@ -9,6 +9,7 @@ const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
 };
@@ -202,6 +203,15 @@ export function createAppServer(store) {
         const result = store.ingestEvent(body);
         const statusCode = result.deduplicated ? 200 : 201;
         sendJson(res, statusCode, result);
+        return;
+      }
+
+      // List Ingested Webhook Events
+      if (method === 'GET' && pathname === '/api/events') {
+        const limit = Number(url.searchParams.get('limit') || 50);
+        sendJson(res, 200, {
+          events: store.listEvents(limit),
+        });
         return;
       }
 

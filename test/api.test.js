@@ -219,9 +219,15 @@ test('GET /api/accounts/export exports valid CSV and JSON reports and serves UI 
     const html = await htmlRes.text();
     assert.match(html, /SignalStream HQ/);
 
-    const svgRes = await fetch(`${ctx.baseUrl}/docs/ui-preview.svg`);
-    assert.equal(svgRes.status, 200);
-    assert.match(svgRes.headers.get('content-type') || '', /image\/svg\+xml/);
+    const pngRes = await fetch(`${ctx.baseUrl}/docs/account-ledger.png`);
+    assert.equal(pngRes.status, 200);
+    assert.match(pngRes.headers.get('content-type') || '', /image\/png/);
+
+    const eventsRes = await fetch(`${ctx.baseUrl}/api/events?limit=10`);
+    assert.equal(eventsRes.status, 200);
+    const eventsJson = await eventsRes.json();
+    assert.ok(Array.isArray(eventsJson.events));
+    assert.ok(eventsJson.events.length >= 5);
 
     // Unsupported export format returns 400
     const badExport = await fetch(`${ctx.baseUrl}/api/accounts/export?format=xml`);

@@ -1,7 +1,7 @@
 {
   "name": "signalstream-hq",
   "version": "1.0.0",
-  "description": "Full-stack revenue operations & customer health command center with idempotent webhook ingestion, explainable churn risk scoring, and automated alert playbooks.",
+  "description": "Account health web app in Node.js and SQLite WAL with idempotent Stripe and support webhooks, weighted churn scoring, and CSV export.",
   "type": "module",
   "main": "src/server.js",
   "engines": {
